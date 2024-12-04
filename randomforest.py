@@ -143,6 +143,11 @@ def get_entropy(data):
 
   return entropy
 
+
+# returns the predicted class of data_point using a given decision tree
+# arguments:
+# -tree is the decision tree used to create the prediction
+# -data_point is a vector representing a single data point that will be classified
 def tree_classify(tree, data_point):
   # if the tree is only the root node, return the majority class
   if tree.split_feature == -1:
@@ -157,84 +162,118 @@ def tree_classify(tree, data_point):
   else:
     return tree.majority_class
 
-# when building the forest, there should be an argument the user supplies that determines what to do with continuous columns (i.e., split on median/mean)
-
-# could set max number of features to split on (since it will break if we fail to identify a continous column)
-
-# cont_method is the method of handling continuous values. 
+# returns a Forest object which can be used with forest_classify() to predict a data point's class
+# arguments:
+# -data is the training set used to train the classifier trees within the forest. The last column of data must be the class feature.
+# -depth_limit is the maximum depth of each classifier tree.
+# -num_trees is the number of trees to create for the forest.
+# -cont_method is the method of handling continuous values. currently supports 'mean' and 'median'
 def build_forest(data, depth_limit, num_trees = 5, cont_method = 'mean'):
   # apply the supplied method for handling continuous values 
   data = apply_cont_method(data, cont_method)
 
+  # check for an invalid method
   if type(data) == type(1):
     print("Invalid continous data handling method")
     return
 
+  # create a base Forest object
   forest = Forest(num_trees)
 
-  # for each tree
+  # for each tree in the forest
   for tree_num in range(num_trees):
     # get a bootstrapped sample
     boot = get_boot_sample(data)
     # get a subset of features
     feature_sub = get_feature_sub(data)
     # build the tree
-    forest.trees.append( create_tree(boot, depth_limit, feature_sub))
+    forest.trees.append(create_tree(boot, depth_limit, feature_sub))
 
   return forest
 
+
+# returns an updated array with an applied method for modifying continuous features. A feature is considered continuous if more than half of its values are unique
+# returns 1 if the supplied method is not an existing method
+# arguments:
+# -data is the array object to update
+# -cont_method is the method used to modify continuous features. 
 def apply_cont_method(data, cont_method):
-  # estimate continuous columns; a column is considered continuous if more than half of its values are unique
+  # estimate continuous features; a feature is considered continuous if more than half of its values are unique
   cont_cols = []
+  # for each column in data
   for col in range(len(data[0])):
+     # get a count of unique values
      num_unique = len(np.unique(data[:,col]))
-     if num_unique > len(data[:,col]) / 100:
+     # compare to the total number of values in the column; if at least half are unique, consider the feature continuous
+     if num_unique > len(data[:,col]) / 2:
         cont_cols.append(col)
   
+  # for each continuous feature, apply the supplied method to modify the feature
   for col in cont_cols:
+    # integer divide each feature value by the mean feature value, creating bins
     if cont_method == 'mean':
-     col_mean = np.mean(data[:,col])
-     data[:,col] = data[:,col] // col_mean
-     
+      col_mean = np.mean(data[:,col])
+      data[:,col] = data[:,col] // col_mean
+    
+    # integer divide each feature value by the median feature value, creating bins
     elif cont_method == 'median':
-     col_median = np.median(data[:,col])
-     data[:,col] = data[:,col] // col_median
+      col_median = np.median(data[:,col])
+      data[:,col] = data[:,col] // col_median
+    # the supplied method did not match any existing methods, return 1
     else:
-     return 1
+      return 1
 
   return data
 
+# returns a bootstrapped sample from data. The sample is the same size as data, but is randomly sampled with replacement
+# arguments:
+# -data is the data object from which samples are drawn
 def get_boot_sample(data):
   # randomly sample indices from the range of all indicies **with replacement**
   boot_indices = list(np.random.choice(range(len(data)), len(data), replace = True))
   boot = data[boot_indices]
   return boot
 
+# returns a list of m feature indicies from data, where m is the ceiling of the square root of the number of features in data.
+# arguments:
+# -data is the data object from which features are sampled
 def get_feature_sub(data):
   num_features = len(data[0])
   feature_sub = np.random.choice(range(num_features), int(np.ceil(num_features ** 0.5)) ,replace = False)
   return feature_sub
 
 
-# takes either a single data point or an array and returns a single predicted class or a list of predicted classes, respectively.
-# 
+# takes either a single vector or an array and returns a single predicted class or a list of predicted classes, respectively.
+# arguments:
+# -forest is the Forest object used to predicted classes
+# -data is the object predicted classes are made for. data may either be a single vector, for which a single classification is made, or an array, for which a classification is made for each row.
 def forest_classify(forest, data):
   # classifying a single point
   if len(data.shape) == 1:
+    # create an empty list to hold classifications by each tree
     classifications = []
+    # for each tree
     for tree_num in range(len(forest.trees)):
+      # predict the class and append the prediction to the classification list
       classifications.append(tree_classify(forest.trees[tree_num], data))
+    # take the most frequent prediction. by default, ties are broken by whichever tied element is first in the vector
     majority_prediction = max(classifications, key = classifications.count)
 
     return majority_prediction
   
   # classifying a set of points
   else:
+    # create an empty list for storing the majority prediction for each row (observation)
     classification_list = []
+    # for each row (observation)
     for point in range(len(data)):
+      # create an empty list to hold classifications by each tree
       classifications = []
+      # for each tree
       for tree_num in range(len(forest.trees)):
+        # predict the class for the observation and append the prediction to the list
         classifications.append(tree_classify(forest.trees[tree_num], data[point]))
+      # store the most frequent prediction
       majority_prediction = max(classifications, key = classifications.count)
       classification_list.append(majority_prediction)
     
