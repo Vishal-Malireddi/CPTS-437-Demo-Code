@@ -8,9 +8,11 @@ class TreeNode:
         self.overall_majority_class = None
 
 class Forest:
-    def __init__(self, num_trees):
+    def __init__(self, num_trees, cont_split, cont_cols):
         self.num_trees = num_trees
         self.trees = []
+        self.cont_split = cont_split
+        self.cont_cols = cont_cols
 
 # creates a root node and expands down from the root
 # arguments:
@@ -170,7 +172,7 @@ def tree_classify(tree, data_point):
 # -cont_method is the method of handling continuous values. currently supports 'mean' and 'median'
 def build_forest(data, depth_limit, num_trees = 5, cont_method = 'mean'):
   # apply the supplied method for handling continuous values 
-  data = apply_cont_method(data, cont_method)
+  data, split, cols = apply_cont_method(data, cont_method)
 
   # check for an invalid method
   if type(data) == type(1):
@@ -178,7 +180,7 @@ def build_forest(data, depth_limit, num_trees = 5, cont_method = 'mean'):
     return
 
   # create a base Forest object
-  forest = Forest(num_trees)
+  forest = Forest(num_trees, split, cols)
 
   # for each tree in the forest
   for tree_num in range(num_trees):
@@ -209,21 +211,22 @@ def apply_cont_method(data, cont_method):
         cont_cols.append(col)
   
   # for each continuous feature, apply the supplied method to modify the feature
+  split = None
   for col in cont_cols:
     # integer divide each feature value by the mean feature value, creating bins
     if cont_method == 'mean':
-      col_mean = np.mean(data[:,col])
-      data[:,col] = data[:,col] // col_mean
+      split = np.mean(data[:,col])
+      data[:,col] = data[:,col] // split
     
     # integer divide each feature value by the median feature value, creating bins
     elif cont_method == 'median':
-      col_median = np.median(data[:,col])
-      data[:,col] = data[:,col] // col_median
+      split = np.median(data[:,col])
+      data[:,col] = data[:,col] // split
     # the supplied method did not match any existing methods, return 1
     else:
       return 1
 
-  return data
+  return data, split, cont_cols
 
 # returns a bootstrapped sample from data. The sample is the same size as data, but is randomly sampled with replacement
 # arguments:
@@ -238,7 +241,7 @@ def get_boot_sample(data):
 # arguments:
 # -data is the data object from which features are sampled
 def get_feature_sub(data):
-  num_features = len(data[0])
+  num_features = len(data[0]) - 1
   feature_sub = np.random.choice(range(num_features), int(np.ceil(num_features ** 0.5)) ,replace = False)
   return feature_sub
 
@@ -248,6 +251,9 @@ def get_feature_sub(data):
 # -forest is the Forest object used to predicted classes
 # -data is the object predicted classes are made for. data may either be a single vector, for which a single classification is made, or an array, for which a classification is made for each row.
 def forest_classify(forest, data):
+  # apply the continuous feature method to the data according to the method tied to the tree
+  data = apply_cont_classify_split(data, forest.cont_split, forest.cont_cols)
+
   # classifying a single point
   if len(data.shape) == 1:
     # create an empty list to hold classifications by each tree
@@ -275,6 +281,17 @@ def forest_classify(forest, data):
         classifications.append(tree_classify(forest.trees[tree_num], data[point]))
       # store the most frequent prediction
       majority_prediction = max(classifications, key = classifications.count)
+      classification_list.append(majority_prediction)
+    
+    return classification_list
+  
+def apply_cont_classify_split(data, split, cols):
+  # for each continuous feature, apply the supplied method to modify the feature
+  for col in cols:
+    # integer divide each feature value by the split value, creating bins
+    data[:,col] = data[:,col] // split
+  
+  return data
       classification_list.append(majority_prediction)
     
     return classification_list
