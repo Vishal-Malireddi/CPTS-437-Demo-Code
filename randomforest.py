@@ -24,6 +24,14 @@ def create_tree(data, depthLimit, feature_sub = []):
   if len(data) == 0:
     return None
   
+  # calculate class weights
+  class_counts = np.unique(data[:,-1], return_counts = True)[1]
+  total_class_count = len(data)
+  weight_list = total_class_count / class_counts
+  weight_dict = {}
+  for class_name, class_index in zip(np.unique(data[:,-1]), (range(len(weight_list)))):
+    weight_dict[class_name] = weight_list[class_index]
+
   # create a dictionary of possible values for each feature
   # if all features are being used
   if len(feature_sub) == 0:
@@ -37,14 +45,14 @@ def create_tree(data, depthLimit, feature_sub = []):
     for feature_index in feature_sub:
       featureDict[feature_index] = set([example[feature_index] for example in data])
 
-  overall_majority = majority_class(data, 0)
-  return expand(data, featureDict, depthLimit, 0, overall_majority)
+  overall_majority = majority_class(data, 0, weight_dict)
+  return expand(data, featureDict, depthLimit, 0, overall_majority, weight_dict)
 
 # creates child nodes for a given subset of data. capable of returning leaf nodes if the depth limit is reached or if there is no possible split
 # arguments:
 # -data is the subset of the training data considered for expanding the tree
-def expand(data, featureDict, depthLimit, depth, overall_majority):
-  tree_node = TreeNode(majority_class(data, overall_majority))
+def expand(data, featureDict, depthLimit, depth, overall_majority, weight_dict):
+  tree_node = TreeNode(majority_class(data, overall_majority, weight_dict))
   # if no examples for this node, then return leaf node predicting majority class
   if len(data) == 0:
     return tree_node
@@ -66,7 +74,7 @@ def expand(data, featureDict, depthLimit, depth, overall_majority):
   # recursively create child nodes for each data subset for the child
   for value in featureDict[best_feature]:
       child_data = filter_data(data, best_feature, value)
-      tree_node.children[value] = expand(child_data, remaining_features, depthLimit, depth + 1, overall_majority)
+      tree_node.children[value] = expand(child_data, remaining_features, depthLimit, depth + 1, overall_majority, weight_dict)
 
   return tree_node
 
@@ -74,11 +82,17 @@ def expand(data, featureDict, depthLimit, depth, overall_majority):
 # returns the majority class for a subset of data
 # arguments:
 # -data is the subset of data being examined. it may be the entire training set or a subset of it
-def majority_class(data, overall_majority):
+def majority_class(data, overall_majority, weight_dict):
   if len(data) == 0:
      return overall_majority
-  classes = [row[-1] for row in data]
-  return max(set(classes), key=classes.count)
+  data = np.asarray(data)
+  classes = np.unique(data[:,-1])
+  class_counts = np.unique(data[:,-1], return_counts = True)[1]
+  weighted_class_counts = class_counts
+  for class_name, class_index in zip(classes, range(len(classes))):
+    weighted_class_counts[class_index] = class_counts[class_index] * weight_dict[class_name]
+  
+  return classes[list(weighted_class_counts).index(max(weighted_class_counts))]
 
 # returns whether the data has only one class
 # arguments:
@@ -156,7 +170,13 @@ def tree_classify(tree, data_point):
     return tree.majority_class
 
   # select the child node from the data point feature
-  child = tree.children[data_point[tree.split_feature]]
+  #print("trying feature", tree.split_feature, "with data_point[feature] =", data_point[tree.split_feature])
+  #print("tree has children:", tree.children.keys())
+  if data_point[tree.split_feature] in tree.children:
+    child = tree.children[data_point[tree.split_feature]]
+  else:
+    rand_child = np.random.choice(list(tree.children.keys()))
+    child = tree.children[rand_child]
 
   # if there are more children, keep traversing, otherwise return the majority class
   if child:
@@ -171,7 +191,7 @@ def tree_classify(tree, data_point):
 # -num_trees is the number of trees to create for the forest.
 # -cont_method is the method of handling continuous values. currently supports 'mean' and 'median'
 def build_forest(data, depth_limit, num_trees = 5, cont_method = 'mean'):
-  # apply the supplied method for handling continuous values 
+  # apply the supplied method for handling continuous values
   data, split, cols = apply_cont_method(data, cont_method)
 
   # check for an invalid method
@@ -198,7 +218,7 @@ def build_forest(data, depth_limit, num_trees = 5, cont_method = 'mean'):
 # returns 1 if the supplied method is not an existing method
 # arguments:
 # -data is the array object to update
-# -cont_method is the method used to modify continuous features. 
+# -cont_method is the method used to modify continuous features.
 def apply_cont_method(data, cont_method):
   # estimate continuous features; a feature is considered continuous if more than half of its values are unique
   cont_cols = []
@@ -209,15 +229,16 @@ def apply_cont_method(data, cont_method):
      # compare to the total number of values in the column; if at least half are unique, consider the feature continuous
      if num_unique > len(data[:,col]) / 2:
         cont_cols.append(col)
-  
+
   # for each continuous feature, apply the supplied method to modify the feature
   split = None
   for col in cont_cols:
+    data[:,col] = data[:,col].astype(float)
     # integer divide each feature value by the mean feature value, creating bins
     if cont_method == 'mean':
       split = np.mean(data[:,col])
       data[:,col] = data[:,col] // split
-    
+
     # integer divide each feature value by the median feature value, creating bins
     elif cont_method == 'median':
       split = np.median(data[:,col])
@@ -266,7 +287,7 @@ def forest_classify(forest, data):
     majority_prediction = max(classifications, key = classifications.count)
 
     return majority_prediction
-  
+
   # classifying a set of points
   else:
     # create an empty list for storing the majority prediction for each row (observation)
@@ -282,16 +303,20 @@ def forest_classify(forest, data):
       # store the most frequent prediction
       majority_prediction = max(classifications, key = classifications.count)
       classification_list.append(majority_prediction)
-    
+
     return classification_list
-  
+
 def apply_cont_classify_split(data, split, cols):
   # for each continuous feature, apply the supplied method to modify the feature
   for col in cols:
     # integer divide each feature value by the split value, creating bins
     data[:,col] = data[:,col] // split
-  
+
   return data
-      classification_list.append(majority_prediction)
-    
-    return classification_list
+
+def evaluate(predictions, test):
+  correct = 0
+  for pred_index in range(len(predictions)):
+    if predictions[pred_index] == test[pred_index, -1]:
+        correct += 1
+  return correct / len(predictions)
